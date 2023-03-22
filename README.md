@@ -24,8 +24,14 @@ Synthetic-Image-Generator.
 You have a dataset you wanted to artificially extend using SIGtor. <b><i>Note that</i></b> SIGtor is an offline dataset generator not an augmentation technique you use while training a deep learning model. The generated images, however, with or without the original images can be used to train a model.
 </li>
 <li>
-Your dataset should be annotated in YOLO formant with bounding boxes annotated as: <ul> ./Datasets/Source/Images/image1.jpg $x_1$,$y_1$,$x_2$,$y_2$,$A$ $x_1$,$y_1$,$x_2$,$y_2$,$B$ $x_1$,$y_1$,$x_2$,$y_2$,$C$ $x_1$,$y_1$,$x_2$,$y_2$,$D$ </ul>
-<br>
+Your dataset should be annotated in YOLO formant with bounding boxes annotated as: 
+
+<ul> 
+  <div>
+    ./Datasets/Source/Images/image1.jpg $x_1,y_1,x_2,y_2,A\ x_1,y_1,x_2,y_2,B\ x_1,y_1,x_2,y_2,C\ x_1,y_1,x_2,y_2,D$ <br>
+  </div>
+</ul>
+
 For this demo I will use Pascal VOC or COCO Object Detection and Instance Segmentation Mask downloaded from Kaggle or COCO dataset site. The tools to convert either Pascal VOC or COCO dataset into YOLO format is found in tools folder of this project.
 
 Though may not necessarily be in the project folder, one can consider arranging folders as shown in the figure below.
@@ -51,10 +57,8 @@ Synthetic image generation has two steps.
 
 
 Take for example the above image has four objects (A, B, C and D) annotated as:
-
-./Datasets/Source/Images/image1.jpg $x_1$,$y_1$,$x_2$,$y_2$,$A$ $x_1$,$y_1$,$x_2$,$y_2$,$B$ $x_1$,$y_1$,$x_2$,$y_2$,$C$
-$x_1$,$y_1$,$x_2$,$y_2$,$D$
-
+./Datasets/Source/Images/image1.jpg $x_1,y_1,x_2,y_2,A\ x_1,y_1,x_2,y_2,B\ x_1,y_1,x_2,y_2,C\ x_1,y_1,x_2,y_2,D$ <br>
+  
 <i>(Of course A, B, C, D will be the object classes integer index and the coordinates will be different according to the
 objects actual coordinates!)</i>
 
@@ -72,9 +76,9 @@ each other, re-annotates the line into several annotation lines so that:
 Therefore, after expanding the above annotation line will have at least three annotation lines as in below.
 
 <div>
-./Datasets/Source/Images/image1.jpg $x_1$,$y_1$,$x_2$,$y_2$,$B$<br>
-./Datasets/Source/Images/image1.jpg $x_1$,$y_1$,$x_2$,$y_2$,$D$<br>
-./Datasets/Source/Images/image1.jpg $x_1$,$y_1$,$x_2$,$y_2$,$A$ $x_1$,$y_1$,$x_2$,$y_2$,$B$ $x_1$,$y_1$,$x_2$,$y_2$,$C$<br>
+./Datasets/Source/Images/image1.jpg $x_1,y_1,x_2,y_2,B$<br>
+./Datasets/Source/Images/image1.jpg $x_1,y_1,x_2,y_2,D$<br>
+./Datasets/Source/Images/image1.jpg $x_1,y_1,x_2,y_2,A\ x_1,y_1,x_2,y_2,B\ x_1,y_1,x_2,y_2,C$<br>
 </div>
 
 To accomplish this first step, we simply run the expand_annotation.py file with command line arguments or without, given
