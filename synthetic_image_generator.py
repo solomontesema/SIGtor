@@ -16,20 +16,77 @@ from utils import read_ann, get_file_paths, rand, overlap_measure, convert_to_an
     parse_commandline_arguments
 
 
+import numpy as np
+
 def get_next_source(current_indx, total_indexs, randomly=False):
+    """
+    Get the next source index given the current index and the total number of sources.
+
+    Args:
+        current_indx (int): The current source index.
+        total_indexs (int): The total number of sources.
+        randomly (bool): Whether to choose the next index randomly. Defaults to False.
+
+    Returns:
+        int: The index of the next source.
+
+    Raises:
+        ValueError: If current_indx is greater than or equal to total_indexs.
+
+    """
+
+    if current_indx >= total_indexs:
+        raise ValueError("current_indx cannot be greater than or equal to total_indexs.")
+
     if randomly:
         return np.random.randint(0, total_indexs - 1)
-    if current_indx < total_indexs - 1:
+    elif current_indx < total_indexs - 1:
         return current_indx + 1
     else:
         return 0
 
 
+
+import os
+import cv2
+import numpy as np
+
 def get_backgrnd_image(bckgrnd_imgs_dir, target_img_size):
+    """
+    Returns a background image of the specified size, either randomly selected from a directory of images
+    or a solid color if no images are found.
+
+    Args:
+    - bckgrnd_imgs_dir: str, the directory path containing background images
+    - target_img_size: tuple, the desired size of the background image in (height, width, channels)
+
+    Returns:
+    - bcgrnd_img: numpy.ndarray, the background image
+
+    Raises:
+    - ValueError: if target_img_size is not a tuple of length 2 or 3
+    - ValueError: if bckgrnd_imgs_dir does not exist
+    - TypeError: if bckgrnd_imgs_dir is not a string
+    - TypeError: if target_img_size is not a tuple
+
+    """
+
+    if not isinstance(target_img_size, tuple):
+        raise TypeError('target_img_size must be a tuple')
+
+    if len(target_img_size) not in (2, 3):
+        raise ValueError('target_img_size must be a tuple of length 2 or 3')
+
+    if not isinstance(bckgrnd_imgs_dir, str):
+        raise TypeError('bckgrnd_imgs_dir must be a string')
+
+    if not os.path.exists(bckgrnd_imgs_dir):
+        raise ValueError('bckgrnd_imgs_dir does not exist')
+
+    bckgrnd_imgs_list = []
     if os.path.exists(bckgrnd_imgs_dir):
         bckgrnd_imgs_list = get_file_paths(bckgrnd_imgs_dir, file_format=['.jpg', '.png', '.jpeg'])
-    else:
-        bckgrnd_imgs_list = []
+
     if len(bckgrnd_imgs_list) != 0:
         np.random.shuffle(bckgrnd_imgs_list)
         bcgrnd_img_path = np.random.choice(bckgrnd_imgs_list)
@@ -37,55 +94,142 @@ def get_backgrnd_image(bckgrnd_imgs_dir, target_img_size):
         bcgrnd_img = cv2.resize(bcgrnd_img, target_img_size[:2])
     else:
         bcgrnd_img = np.ones(target_img_size)
-        random_color = np.random.randint(0, 255, size=3).reshape(1, 3)
+        random_color = np.random.randint(0, 255, size=3).reshape(1, 1, 3)
         bcgrnd_img *= random_color
         bcgrnd_img = np.array(bcgrnd_img).astype(np.uint8)
+
     bcgrnd_img = cv2.GaussianBlur(bcgrnd_img, (3, 3), 0)
     return bcgrnd_img
 
 
+
+from typing import Tuple, Union, List
+import os
+import numpy as np
+from PIL import Image
+
+
+import os
+import numpy as np
+from PIL import Image
+
+
 def get_objmask(src_imgpath, cutout_coord, maskdir, class_list=None):
+    """
+    Returns the object mask for the given image and cutout coordinates. If the mask file exists, it loads and returns the
+    cropped mask. Otherwise, it creates a new mask of the same size as the cutout coordinates.
+
+    Args:
+        src_imgpath (str): Path to the source image.
+        cutout_coord (tuple): Tuple of 4 integers representing the bounding box of the object in the image (x1, y1, x2, y2).
+        maskdir (str): Path to the directory where mask files are found.
+        class_list (list, optional): List of class names. Defaults to None.
+
+    Returns:
+        obj_mask (PIL.Image.Image): Cropped object mask.
+
+    Raises:
+        ValueError: If the cutout coordinates are invalid.
+        IOError: If there is an error while opening or saving the mask image.
+
+    """
+
+    if not isinstance(cutout_coord, tuple) or len(cutout_coord) != 4:
+        raise ValueError("cutout_coord must be a tuple of 4 integers representing the bounding box (x1, y1, x2, y2)")
+
     fname = os.path.splitext(os.path.basename(src_imgpath))[0]
     mfname = os.path.join(maskdir, fname + ".png")
+
     if os.path.exists(mfname):
-        mask_img = Image.open(mfname)
-        obj_mask = mask_img.crop(box=cutout_coord)
+        try:
+            mask_img = Image.open(mfname)
+            obj_mask = mask_img.crop(box=cutout_coord)
+        except IOError as e:
+            raise IOError("Error while opening mask file") from e
     else:
         x1, y1, x2, y2 = cutout_coord
         outerbox_width = (x2 - x1)
         outerbox_height = (y2 - y1)
         obj_mask = Image.fromarray(255 * np.ones((outerbox_height, outerbox_width), dtype=np.uint8))
+
     return obj_mask
 
 
+
+
+import random
+import numpy as np
+
 def get_outerbox(org_boxes, img_size=(None, None), addrandomoffset=False, minoffset=1, maxoffset=5):
-    if (img_size[0] is not None and img_size[1] is not None) and addrandomoffset:
+    """
+    Returns the coordinates of the outer bounding box that contains all the boxes in org_boxes.
+
+    Args:
+    - org_boxes (ndarray): An array of shape (N, 4) where N is the number of boxes and each row
+        represents a box in the format [xmin, ymin, xmax, ymax].
+    - img_size (tuple): A tuple of two integers representing the width and height of the image.
+        If not specified, the size will not be taken into account while computing the outer box.
+    - addrandomoffset (bool): A flag indicating whether to add a random offset to the outer box.
+    - minoffset (int): The minimum value of the random offset to be added.
+    - maxoffset (int): The maximum value of the random offset to be added.
+
+    Returns:
+    - outerbox (ndarray): An array of shape (1, 4) representing the outer bounding box in the
+        format [xmin, ymin, xmax, ymax].
+    """
+    if img_size[0] is not None and img_size[1] is not None:
         w, h = img_size
-        x1 = max(np.min(org_boxes[..., 0]) - int(random.randint(minoffset, maxoffset)), 0)
-        y1 = max(np.min(org_boxes[..., 1]) - int(random.randint(minoffset, maxoffset)), 0)
-        x2 = min(np.max(org_boxes[..., 2]) + int(random.randint(minoffset, maxoffset)), w)
-        y2 = min(np.max(org_boxes[..., 3]) + int(random.randint(minoffset, maxoffset)), h)
-        outerbox = np.array([x1, y1, x2, y2]).reshape(-1, 4)
     else:
-        x1 = np.min(org_boxes[..., 0])
-        y1 = np.min(org_boxes[..., 1])
-        x2 = np.max(org_boxes[..., 2])
-        y2 = np.max(org_boxes[..., 3])
+        w, h = np.max(org_boxes[..., 2]), np.max(org_boxes[..., 3])
+
+    try:
+        if addrandomoffset:
+            x1 = max(np.min(org_boxes[..., 0]) - int(random.randint(minoffset, maxoffset)), 0)
+            y1 = max(np.min(org_boxes[..., 1]) - int(random.randint(minoffset, maxoffset)), 0)
+            x2 = min(np.max(org_boxes[..., 2]) + int(random.randint(minoffset, maxoffset)), w)
+            y2 = min(np.max(org_boxes[..., 3]) + int(random.randint(minoffset, maxoffset)), h)
+        else:
+            x1 = np.min(org_boxes[..., 0])
+            y1 = np.min(org_boxes[..., 1])
+            x2 = np.max(org_boxes[..., 2])
+            y2 = np.max(org_boxes[..., 3])
+
         outerbox = np.array([x1, y1, x2, y2]).reshape(-1, 4)
+    except:
+        outerbox = np.zeros((1, 4))
+
     return outerbox
 
+def get_data(annotation_line: str, maskdir: str):
+    """
+    Extracts image, object image, object mask, outer box, and inner boxes from an annotation line.
 
-def get_data(annotation_line, maskdir):
-    line = annotation_line.split()
-    imgpath = line[0]
-    org_img = Image.open(imgpath)
-    org_boxes = np.array([np.array(list(map(float, box.split(',')))) for box in line[1:]]).astype('int32').reshape(-1,
-                                                                                                                   5)
-    outerbox = get_outerbox(org_boxes, org_img.size, addrandomoffset=False, minoffset=0, maxoffset=15)
-    inner_boxes = org_boxes
-    obj_classes = list(inner_boxes[:, 4]) if len(inner_boxes[:, 4]) != 0 else None
-    obj_img = org_img.crop(box=outerbox[0, 0:4])
-    obj_mask = get_objmask(imgpath, outerbox[0, 0:4], maskdir, class_list=obj_classes)
+    Parameters:
+        annotation_line (str): A string containing the image path and object boxes information.
+        maskdir (str): The directory where the image masks are stored.
+
+    Returns:
+        imgpath (str): The path of the original image.
+        obj_img (PIL.Image.Image): The object image extracted from the original image.
+        obj_mask (PIL.Image.Image): The object mask extracted from the original mask..
+        outerbox (numpy.ndarray): The outer bounding box that contains all object boxes.
+        inner_boxes (numpy.ndarray): The object boxes contained in the outer box.
+    """
+
+    try:
+        line = annotation_line.split()
+        imgpath = line[0]
+        org_img = Image.open(imgpath)
+        org_boxes = np.array([np.array(list(map(float, box.split(',')))) for box in line[1:]]).astype('int32').reshape(-1, 5)
+        outerbox = get_outerbox(org_boxes, org_img.size, addrandomoffset=False, minoffset=0, maxoffset=15)
+        inner_boxes = org_boxes
+        obj_classes = list(inner_boxes[:, 4]) if len(inner_boxes[:, 4]) != 0 else None
+        obj_img = org_img.crop(box=outerbox[0, 0:4])
+        obj_mask = get_objmask(imgpath, outerbox[0, 0:4], maskdir, class_list=obj_classes)
+    except Exception as e:
+        print(f"Error occurred while processing annotation line: {annotation_line}")
+        raise e
+    
     return imgpath, obj_img, obj_mask, outerbox, inner_boxes
 
 
