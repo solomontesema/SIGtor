@@ -5,7 +5,7 @@
       <excludeFolder url="file://$MODULE_DIR$/env" />
       <excludeFolder url="file://$MODULE_DIR$/.ipynb_checkpoints" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.8 (SIGtor)" jdkType="Python SDK" />
+    <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PackageRequirementsSettings">

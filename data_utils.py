@@ -1,8 +1,9 @@
 import random
-
+import math
 import cv2
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageStat
+from skimage import color, exposure
 
 from utils import rand
 
@@ -197,17 +198,17 @@ def reshape_boxes(boxes, src_shape, target_shape, padding_shape, offset, horizon
     return boxes
 
 
-def random_size(image, mask=None, boxes=None, scale=1.0, prob=0.2, keepaspectratio=True):
+def random_resize(image, mask=None, boxes=None, scale=1.0, scale_w_or_h=0, keep_aspect_ratio=True):
     old_w, old_h = image.size
-    if keepaspectratio:
-        if prob < 0.5:
-            ratio = (old_w / old_h)
-            new_h = np.round(scale * old_h).astype('int')
-            new_w = np.round(ratio * new_h).astype('int')
-        else:
+    if keep_aspect_ratio:
+        if scale_w_or_h:
             ratio = (old_h / old_w)
             new_w = np.round(scale * old_w).astype('int')
             new_h = np.round(ratio * new_w).astype('int')
+        else:
+            ratio = (old_w / old_h)
+            new_h = np.round(scale * old_h).astype('int')
+            new_w = np.round(ratio * new_h).astype('int')
     else:
         new_h = np.round(scale * old_h).astype('int')
         new_w = np.round(scale * old_w).astype('int')
@@ -225,7 +226,7 @@ def random_size(image, mask=None, boxes=None, scale=1.0, prob=0.2, keepaspectrat
     return image, mask, boxes
 
 
-def random_hsv_distort(image, hue=.1, sat=1.5, val=1.5):
+def random_hsv_distort(image, hue=.1, sat=1.5, val=1.5, prob=0.2):
     """
     Random distort image in HSV color space
     usually for training data preprocess
@@ -243,35 +244,37 @@ def random_hsv_distort(image, hue=.1, sat=1.5, val=1.5):
     # Returns
         new_image: distorted PIL Image object.
     """
-    # get random HSV param
-    hue = rand(-hue, hue)
-    sat = rand(1, sat) if rand() < .5 else 1 / rand(1, sat)
-    val = rand(1, val) if rand() < .5 else 1 / rand(1, val)
+    if rand() <= prob:
+        # get random HSV param
+        hue = rand(-hue, hue)
+        sat = rand(1, sat) if rand() < .5 else 1 / rand(1, sat)
+        val = rand(1, val) if rand() < .5 else 1 / rand(1, val)
 
-    # transform color space from RGB to HSV
-    x = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2HSV)
+        # transform color space from RGB to HSV
+        x = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2HSV)
 
-    # distort image
-    # cv2 HSV value range:
-    #     H: [0, 179]
-    #     S: [0, 255]
-    #     V: [0, 255]
-    x = x.astype(np.float64)
-    x[..., 0] = (x[..., 0] * (1 + hue)) % 180
-    x[..., 1] = x[..., 1] * sat
-    x[..., 2] = x[..., 2] * val
-    x[..., 1:3][x[..., 1:3] > 255] = 255
-    x[..., 1:3][x[..., 1:3] < 0] = 0
-    x = x.astype(np.uint8)
+        # distort image
+        # cv2 HSV value range:
+        #     H: [0, 179]
+        #     S: [0, 255]
+        #     V: [0, 255]
+        x = x.astype(np.float64)
+        x[..., 0] = (x[..., 0] * (1 + hue)) % 180
+        x[..., 1] = x[..., 1] * sat
+        x[..., 2] = x[..., 2] * val
+        x[..., 1:3][x[..., 1:3] > 255] = 255
+        x[..., 1:3][x[..., 1:3] < 0] = 0
+        x = x.astype(np.uint8)
 
-    # back to PIL RGB distort image
-    x = cv2.cvtColor(x, cv2.COLOR_HSV2RGB)
-    new_image = Image.fromarray(x)
+        # back to PIL RGB distort image
+        x = cv2.cvtColor(x, cv2.COLOR_HSV2RGB)
+        new_image = Image.fromarray(x)
+        return new_image
+    else:
+        return image
 
-    return new_image
 
-
-def random_brightness(image, jitter=.5):
+def random_brightness(image, jitter=.5, prob=0.5):
     """
     Random adjust brightness for image
 
@@ -284,14 +287,20 @@ def random_brightness(image, jitter=.5):
     # Returns
         new_image: adjusted PIL Image object.
     """
-    enh_bri = ImageEnhance.Brightness(image)
-    brightness = rand(jitter, 1 / jitter)
-    new_image = enh_bri.enhance(brightness)
+    if rand() <= prob:
+        is_bright = is_image_bright(image)
+        if is_bright:
+            brightness = rand(0.75, 1.0)
+        else:
+            brightness = rand(1.0, 1.25)
+        enh_bri = ImageEnhance.Brightness(image)
+        new_image = enh_bri.enhance(brightness)
+        return new_image
+    else:
+        return image
 
-    return new_image
 
-
-def random_chroma(image, jitter=.5):
+def random_chroma(image, jitter=.5, prob=0.5):
     """
     Random adjust chroma (color level) for image
 
@@ -304,14 +313,20 @@ def random_chroma(image, jitter=.5):
     # Returns
         new_image: adjusted PIL Image object.
     """
-    enh_col = ImageEnhance.Color(image)
-    color = rand(jitter, 1 / jitter)
-    new_image = enh_col.enhance(color)
+    if rand() <= prob:
+        high_chroma = has_high_chroma(image)
+        if high_chroma:
+            color = rand(0.75, 1.0)
+        else:
+            color = rand(1.0, 1.25)
+        enh_col = ImageEnhance.Color(image)
+        new_image = enh_col.enhance(color)
+        return new_image
+    else:
+        return image
 
-    return new_image
 
-
-def random_contrast(image, jitter=.5):
+def random_contrast(image, jitter=.5, prob=0.5):
     """
     Random adjust contrast for image
 
@@ -324,14 +339,20 @@ def random_contrast(image, jitter=.5):
     # Returns
         new_image: adjusted PIL Image object.
     """
-    enh_con = ImageEnhance.Contrast(image)
-    contrast = rand(jitter, 1 / jitter)
-    new_image = enh_con.enhance(contrast)
+    if rand() <= prob:
+        is_bright = has_high_contrast(image)
+        if is_bright:
+            contrast = rand(0.75, 1.0)
+        else:
+            contrast = rand(1.0, 1.25)
+        enh_con = ImageEnhance.Contrast(image)
+        new_image = enh_con.enhance(contrast)
+        return new_image
+    else:
+        return image
 
-    return new_image
 
-
-def random_sharpness(image, jitter=.5):
+def random_sharpness(image, jitter=.75, prob=0.2):
     """
     Random adjust sharpness for image
 
@@ -344,11 +365,17 @@ def random_sharpness(image, jitter=.5):
     # Returns
         new_image: adjusted PIL Image object.
     """
-    enh_sha = ImageEnhance.Sharpness(image)
-    sharpness = rand(jitter, 1 / jitter)
-    new_image = enh_sha.enhance(sharpness)
-
-    return new_image
+    if rand() <= prob:
+        is_sharp = is_high_sharpness(image)
+        if is_sharp:
+            sharpness = rand(0.75, 1.0)
+        else:
+            sharpness = rand(1.0, 1.25)
+        enh_sha = ImageEnhance.Sharpness(image)
+        new_image = enh_sha.enhance(sharpness)
+        return new_image
+    else:
+        return image
 
 
 def random_horizontal_flip(image, prob=0.2):
@@ -362,10 +389,9 @@ def random_horizontal_flip(image, prob=0.2):
         image: adjusted PIL Image object.
         flip: boolean flag for vertical flip action
     """
-    flip = rand() < prob
-    if flip:
+    if rand() <= prob:
         image = image.transpose(Image.FLIP_LEFT_RIGHT)
-    return image, flip
+    return image
 
 
 def random_vertical_flip(image, prob=0.2):
@@ -382,10 +408,9 @@ def random_vertical_flip(image, prob=0.2):
         image: adjusted PIL Image object.
         flip: boolean flag for vertical flip action
     """
-    flip = rand() < prob
-    if flip:
+    if rand() <= prob:
         image = image.transpose(Image.FLIP_TOP_BOTTOM)
-    return image, flip
+    return image
 
 
 def random_grayscale(image, prob=.2):
@@ -401,8 +426,7 @@ def random_grayscale(image, prob=.2):
     # Returns
         image: adjusted PIL Image object.
     """
-    convert = rand() < prob
-    if convert:
+    if rand() <= prob:
         # convert to grayscale first, and then
         # back to 3 channels fake RGB
         image = image.convert('L')
@@ -517,12 +541,230 @@ def random_rotate(image, boxes, mask=None, rotate_range=20, prob=0.1):
     return image, boxes, mask
 
 
-def isbright(image, dim=10, thresh=0.5):
-    # Resize image to 10x10
-    image = cv2.resize(image, (dim, dim))
-    # Convert color space to LAB format and extract L channel
-    L, A, B = cv2.split(cv2.cvtColor(image, cv2.COLOR_BGR2LAB))
-    # Normalize L channel by dividing all pixel values with maximum pixel value
-    L = L / np.max(L)
-    # Return True if mean is greater than thresh else False
-    return np.mean(L) > thresh
+def is_image_bright(img, threshold=128):
+    """
+    Returns True if the image at image_path is bright (average luminosity > threshold),
+    False otherwise.
+    """
+    img = img.convert('L')
+    luminosity = sum(img.getdata()) / len(img.getdata())
+    return luminosity > threshold
+
+
+def has_high_contrast(image, threshold=40):
+    """
+    Returns True if the given PIL image has high contrast, else False.
+    """
+    # Calculate the standard deviation of the image's luminosity
+    stat = ImageStat.Stat(image)
+    std_dev = stat.stddev[0]
+
+    # If the standard deviation is greater than a threshold value, consider the image to have high contrast
+    if std_dev > threshold:
+        return True
+    else:
+        return False
+
+
+def is_high_sharpness(image, threshold=100):
+    # Convert image to grayscale
+    gray = image.convert('L')
+    # Apply edge enhancement filter
+    enhanced = gray.filter(ImageFilter.EDGE_ENHANCE)
+    # Calculate sharpness
+    sharpness = ImageStat.Stat(enhanced).rms[0]
+    # Return True if sharpness is above a certain threshold
+    return sharpness > threshold
+
+
+def has_high_chroma(image, threshold=20):
+    """
+    Returns True if the given PIL image has high chroma, else False.
+    """
+    # Calculate the standard deviation of the image's chroma
+    stat = ImageStat.Stat(image)
+    r_std, g_std, b_std = stat.stddev[:3]
+    chroma_std = ((r_std ** 2) + (g_std ** 2) + (b_std ** 2)) ** 0.5
+
+    # If the standard deviation is greater than a threshold value, consider the image to have high chroma
+    if chroma_std > threshold:
+        return True
+    else:
+        return False
+
+
+def enhance_chroma(image):
+    """
+    Enhance chroma of a PIL image if it's too dark or too bright
+    """
+    # Convert PIL image to numpy array and then to LAB color space
+    img = np.array(image)
+    lab = color.rgb2lab(img)
+
+    # Split LAB channels and normalize the L channel
+    l, a, b = np.split(lab, 3, axis=2)
+    l_norm = exposure.rescale_intensity(l, in_range=(0, 100), out_range=(0, 1))
+
+    # Apply CLAHE on the L channel
+    l_clahe = exposure.equalize_adapthist(l_norm, clip_limit=0.03)
+
+    # Merge the LAB channels and convert back to RGB color space
+    lab_clahe = np.concatenate([l_clahe, a, b], axis=2)
+    img_clahe = color.lab2rgb(lab_clahe)
+
+    # Convert back to PIL image
+    enhanced_image = Image.fromarray(np.uint8(img_clahe * 255))
+
+    return enhanced_image
+
+
+import cv2
+
+
+def image_quality(image):
+    # Convert image to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Calculate image sharpness
+    laplacian = cv2.Laplacian(gray, cv2.CV_64F).var()
+    if laplacian < 100:
+        return 'low'
+    elif laplacian < 1000:
+        return 'medium'
+    else:
+        # Calculate image contrast
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        hist_norm = hist.ravel() / hist.sum()
+        Q = hist_norm.cumsum()
+        bins = np.arange(256)
+        fn_min = np.inf
+        thresh = -1
+        for i in range(1, 256):
+            p1, p2 = np.hsplit(hist_norm, [i])
+            q1, q2 = Q[i], Q[255] - Q[i]
+            if q1 < 1.e-6 or q2 < 1.e-6:
+                continue
+            b1, b2 = np.hsplit(bins, [i])
+            m1, m2 = np.sum(p1 * b1) / q1, np.sum(p2 * b2) / q2
+            v1, v2 = np.sum(((b1 - m1) ** 2) * p1) / q1, np.sum(((b2 - m2) ** 2) * p2) / q2
+            fn = v1 * q1 + v2 * q2
+            if fn < fn_min:
+                fn_min = fn
+                thresh = i
+        if thresh < 100:
+            return 'low'
+        elif thresh < 150:
+            return 'medium'
+        else:
+            # Calculate image brightness
+            gray = cv2.GaussianBlur(gray, (7, 7), 0)
+            mean = np.mean(gray)
+            if mean < 80:
+                return 'low'
+            elif mean < 150:
+                return 'medium'
+            else:
+                return 'high'
+
+
+def enhance_image(image):
+    """
+    Applies image enhancement post-processing to the input image based on its characteristics.
+
+    Args:
+        image (PIL.Image): The input image to enhance.
+
+    Returns:
+        PIL.Image: The enhanced image.
+    """
+    # Convert the image to a numpy array for easier processing
+    np_image = np.array(image)
+
+    # Check the average brightness of the image
+    avg_brightness = np.mean(np_image)
+    if avg_brightness > 200:
+        # If the image is too bright, decrease the brightness by 30%
+        enhancer = ImageEnhance.Brightness(image)
+        image = enhancer.enhance(0.7)
+    elif avg_brightness < 50:
+        # If the image is too dark, increase the brightness by 30%
+        enhancer = ImageEnhance.Brightness(image)
+        image = enhancer.enhance(1.3)
+
+    # Check the color contrast of the image
+    std_dev = np.std(np_image)
+    if std_dev < 30:
+        # If the image has low color contrast, increase the contrast by 30%
+        enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(1.3)
+
+    return image
+
+
+def apply_mask(matrix, mask, fill_value):
+    masked = np.ma.array(matrix, mask=mask, fill_value=fill_value)
+    return masked.filled()
+
+
+def apply_threshold(matrix, low_value, high_value):
+    low_mask = matrix < low_value
+    matrix = apply_mask(matrix, low_mask, low_value)
+
+    high_mask = matrix > high_value
+    matrix = apply_mask(matrix, high_mask, high_value)
+
+    return matrix
+
+
+def simplest_cb(img, percent):
+    """
+
+    From: https://gist.github.com/DavidYKay/9dad6c4ab0d8d7dbf3dc
+    """
+    assert img.shape[2] == 3
+    assert 0 < percent < 100
+
+    half_percent = percent / 200.0
+    channels = cv2.split(img)
+
+    out_channels = []
+    for channel in channels:
+        assert len(channel.shape) == 2
+        # find the low and high precentile values (based on the input percentile)
+        height, width = channel.shape
+        vec_size = width * height
+        flat = channel.reshape(vec_size)
+
+        assert len(flat.shape) == 1
+        flat = np.sort(flat)
+        n_cols = flat.shape[0]
+        low_val = flat[math.floor(n_cols * half_percent)]
+        high_val = flat[math.ceil(n_cols * (1.0 - half_percent))]
+
+        # saturate below the low percentile and above the high percentile
+        thresholded = apply_threshold(channel, low_val, high_val)
+        # scale the channel
+        normalized = cv2.normalize(thresholded, thresholded.copy(), 0, 255, cv2.NORM_MINMAX)
+        out_channels.append(normalized)
+
+    return cv2.merge(out_channels)
+
+
+def post_processing(image):
+    IE = ['HE1', 'HE2', 'ColorBalance']  # 'HE1', ,
+    IE_choice = np.random.choice(IE, size=1)
+    image = np.array(image)
+    if IE_choice == 'HE1':
+        ycrcb_img = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+        ycrcb_img[:, :, 0] = cv2.equalizeHist(ycrcb_img[:, :, 0])
+        image = cv2.cvtColor(ycrcb_img, cv2.COLOR_YCrCb2BGR)
+    elif IE_choice == 'HE2':
+        b_image, g_image, r_image = cv2.split(image)
+        b_image_eq = cv2.equalizeHist(b_image)
+        g_image_eq = cv2.equalizeHist(g_image)
+        r_image_eq = cv2.equalizeHist(r_image)
+        image = cv2.merge((b_image_eq, g_image_eq, r_image_eq))
+    elif IE_choice == 'ColorBalance':
+        image = simplest_cb(image, 5)
+    output_img = Image.fromarray(image)
+    return output_img
