@@ -10,7 +10,7 @@ from pycocotools.coco import COCO
 from tqdm import tqdm
 
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', '..'))
-from utils import get_classes
+from sigtor.utils.image_utils import get_classes
 
 sets = ['train2017', 'val2017']
 
