@@ -2,8 +2,16 @@
 
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
+[![GitHub stars](https://img.shields.io/github/stars/solomontesema/sigtor?style=social)](https://github.com/solomontesema/sigtor)
+[![GitHub forks](https://img.shields.io/github/forks/solomontesema/sigtor?style=social)](https://github.com/solomontesema/sigtor)
+[![GitHub issues](https://img.shields.io/github/issues/solomontesema/sigtor)](https://github.com/solomontesema/sigtor/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/solomontesema/sigtor)](https://github.com/solomontesema/sigtor/pulls)
 
-SIGtor is a powerful tool for generating synthetic training datasets for object detection and segmentation tasks. It uses a copy-paste augmentation approach to create new images by combining objects from existing datasets with various backgrounds, while automatically generating accurate bounding boxes and segmentation masks.
+> **SIGtor** - A state-of-the-art offline copy-paste augmentation tool for generating synthetic training datasets for object detection and segmentation. No GANs, no deep learning models required - just pure image processing for realistic data augmentation.
+
+**Keywords:** `object detection` `data augmentation` `copy-paste augmentation` `synthetic dataset generation` `YOLO` `COCO` `Pascal VOC` `computer vision` `deep learning` `dataset balancing` `image segmentation` `bounding box generation` `offline augmentation` `no-GAN augmentation`
+
+SIGtor is a powerful, production-ready tool for generating synthetic training datasets for object detection and segmentation tasks. It uses an advanced copy-paste augmentation approach to create new images by intelligently combining objects from existing datasets with various backgrounds, while automatically generating accurate bounding boxes and segmentation masks. Perfect for researchers, ML engineers, and data scientists working with YOLO, Faster R-CNN, Mask R-CNN, and other object detection frameworks.
 
 ## Quick Reference
 
@@ -645,6 +653,30 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.txt) file for details.
 
+## Use Cases
+
+SIGtor is ideal for:
+
+- **Research**: Generate balanced datasets for academic research in computer vision
+- **Industry**: Create training data for production object detection systems
+- **Data Scarcity**: Augment small datasets to improve model performance
+- **Class Balancing**: Address imbalanced datasets by generating more samples for underrepresented classes
+- **Domain Adaptation**: Create synthetic data for specific domains (autonomous vehicles, surveillance, etc.)
+- **Rapid Prototyping**: Quickly generate diverse training data without manual annotation
+- **YOLO Training**: Perfect companion for YOLOv3, YOLOv4, YOLOv5, YOLOv8 training
+- **COCO/VOC Datasets**: Extend existing COCO or Pascal VOC datasets with synthetic samples
+
+## Related Projects & Alternatives
+
+SIGtor is unique in that it:
+- ✅ **No GANs required** - Pure image processing approach
+- ✅ **Offline operation** - No internet or cloud services needed
+- ✅ **Automatic annotations** - Generates bounding boxes and masks automatically
+- ✅ **Context-aware** - Intelligent blending and augmentation selection
+- ✅ **Production-ready** - Quality validation and comprehensive error handling
+
+**Similar tools:** Mixup, CutMix, Simple Copy-Paste, Albumentations (but SIGtor is specialized for offline copy-paste with automatic annotation generation)
+
 ## Citation
 
 If you use SIGtor in your research, please cite:
@@ -652,9 +684,10 @@ If you use SIGtor in your research, please cite:
 ```bibtex
 @software{sigtor2024,
   title={SIGtor: Supplementary Synthetic Image Generation for Object Detection and Segmentation},
-  author={Solomon Negussie Tesema},
+  author={Tesema, Solomon Negussie},
   year={2024},
-  url={https://github.com/solomontesema/sigtor}
+  url={https://github.com/solomontesema/sigtor},
+  keywords={object detection, data augmentation, synthetic dataset generation}
 }
 ```
 
@@ -691,4 +724,6 @@ SIGtor was developed to address the challenge of creating large, diverse trainin
 
 ## Support
 
-For issues, questions, or contributions, please open an issue on the GitHub repository.
+For questions, issues, or contributions, please open an issue on GitHub.
+
+**Star this repository** ⭐ if you find SIGtor useful for your research or projects!

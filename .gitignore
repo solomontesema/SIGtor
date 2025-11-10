@@ -64,3 +64,7 @@ htmlcov/
 # Misc
 *.bak
 *.tmp
+
+# Private SEO and discoverability documentation (not for public)
+.github/SEO_TIPS.md
+.github/TOPICS.md
