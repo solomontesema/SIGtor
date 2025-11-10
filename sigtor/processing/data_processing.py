@@ -3,7 +3,11 @@ import numpy as np
 from PIL import Image
 from typing import Dict, Tuple, List, Any
 
-from sigtor.processing.augmentation import random_augmentations, heuristic_augmentations
+from sigtor.processing.augmentation import (
+    random_augmentations, heuristic_augmentations, context_aware_augmentations
+)
+from sigtor.processing.context_analysis import ImageContext
+from typing import Optional
 from sigtor.utils.image_utils import recalculate_targetsize, overlap_measure
 
 
@@ -333,14 +337,16 @@ def select_objects_for_image(
         new_img_size: Tuple[int, int],
         source_ann: List[str],
         index_generator: Any,
-        maskdir: str
+        maskdir: str,
+        background_context: Optional[ImageContext] = None,
+        use_context_aware_aug: bool = True
 ) -> Tuple[
     List[str], List[Any], List[Any], List[Any], List[Any],
     List[Any], Tuple[int, int]
 ]:
     """
     Select objects from source annotations to create a new artificial image.
-    And pass each object through some random augmentations to increase object dataset variability.
+    And pass each object through augmentations to increase object dataset variability.
 
     Args:
         max_search_iterations (int): Maximum number of iterations to search for objects.
@@ -348,6 +354,8 @@ def select_objects_for_image(
         source_ann (List[str]): List of source annotations.
         index_generator (SourceIndexGenerator): An instance of SourceIndexGenerator to provide indices.
         maskdir (str): Directory containing the masks.
+        background_context (Optional[ImageContext]): Optional background context for context-aware augmentations.
+        use_context_aware_aug (bool): Whether to use context-aware augmentations if background context is available.
 
     Returns:
         Tuple: A tuple containing lists of image paths, cutout images, masks, coordinates, and the final image size.
@@ -373,13 +381,24 @@ def select_objects_for_image(
         annotation_line = source_ann[source_indx]
         imgpath, obj_img, obj_mask, outerbox, inner_boxes = get_data(annotation_line, maskdir)
 
-        # Apply random augmentations to the cutout image
-
-        # obj_img, obj_mask, outerbox, inner_boxes = random_augmentations(
-        #     obj_img, obj_mask, outerbox, inner_boxes, max_augs=2
-        # )
-        obj_img, obj_mask, outerbox, inner_boxes = heuristic_augmentations(
-            obj_img, obj_mask, outerbox, inner_boxes)
+        # Apply augmentations to the cutout image
+        try:
+            if use_context_aware_aug and background_context is not None:
+                # Use context-aware augmentations
+                obj_img, obj_mask, outerbox, inner_boxes = context_aware_augmentations(
+                    obj_img, obj_mask, outerbox, inner_boxes,
+                    background_context=background_context
+                )
+            else:
+                # Use heuristic augmentations as fallback
+                obj_img, obj_mask, outerbox, inner_boxes = heuristic_augmentations(
+                    obj_img, obj_mask, outerbox, inner_boxes
+                )
+        except Exception:
+            # Fallback to heuristic augmentations if context-aware fails
+            obj_img, obj_mask, outerbox, inner_boxes = heuristic_augmentations(
+                obj_img, obj_mask, outerbox, inner_boxes
+            )
 
         # Store the data
         source_img_paths.append(imgpath)

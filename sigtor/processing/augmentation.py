@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from typing import Tuple, List
+from typing import Tuple, List, Optional, Dict, Any
 from PIL import Image, ImageFilter
 from sigtor.utils.data_utils import (
     random_blur, random_grayscale, random_brightness, random_sharpness,
@@ -8,6 +8,12 @@ from sigtor.utils.data_utils import (
     random_horizontal_flip, random_size, rand
 )
 from sigtor.utils.image_utils import adaptive_adjust_color
+from sigtor.processing.context_analysis import (
+    analyze_image_context, suggest_augmentations, ImageContext
+)
+from sigtor.processing.color_harmonization import (
+    adjust_color_temperature, estimate_color_temperature
+)
 
 # Constants for size thresholds (using COCO's setup)
 SMALL_OBJECT_THRESHOLD = 32 * 32  # Area < 32 * 32 pixels
@@ -327,3 +333,94 @@ def preprocess_source_image(image: np.ndarray) -> np.ndarray:
     """
     preprocessed_image = adaptive_adjust_color(image)
     return preprocessed_image
+
+
+def context_aware_augmentations(
+    obj_img: Image.Image,
+    obj_mask: Image.Image,
+    outerbox: np.ndarray,
+    inner_boxes: np.ndarray,
+    background_img: Optional[np.ndarray] = None,
+    background_context: Optional[ImageContext] = None
+) -> Tuple[Image.Image, Image.Image, np.ndarray, np.ndarray]:
+    """
+    Apply context-aware augmentations based on background analysis.
+    
+    Args:
+        obj_img: Object image to augment.
+        obj_mask: Object mask.
+        outerbox: Outer bounding box.
+        inner_boxes: Inner bounding boxes.
+        background_img: Optional background image for context analysis.
+        background_context: Optional pre-computed background context.
+    
+    Returns:
+        Augmented image, mask, and bounding boxes.
+    """
+    # Convert PIL to numpy for analysis
+    obj_img_np = np.array(obj_img)
+    obj_mask_np = np.array(obj_mask)
+    
+    # Analyze object context
+    object_context = analyze_image_context(obj_img_np, obj_mask_np)
+    
+    # Analyze background context if provided
+    if background_context is None and background_img is not None:
+        background_context = analyze_image_context(background_img)
+    
+    # Get augmentation suggestions if background context available
+    if background_context is not None:
+        suggestions = suggest_augmentations(object_context, background_context)
+        
+        # Apply suggested augmentations
+        if 'brightness_adjust' in suggestions:
+            brightness_factor = 1.0 + suggestions['brightness_adjust']
+            obj_img = random_brightness(obj_img, scale=brightness_factor)
+        
+        if 'contrast_adjust' in suggestions:
+            contrast_factor = 1.0 + suggestions['contrast_adjust']
+            obj_img = random_contrast(obj_img, scale=contrast_factor)
+        
+        if 'saturation_adjust' in suggestions:
+            saturation_factor = 1.0 + suggestions['saturation_adjust']
+            obj_img = random_chroma(obj_img, scale=saturation_factor)
+        
+        if 'color_temp_adjust' in suggestions:
+            # Adjust color temperature
+            obj_img_np = np.array(obj_img)
+            current_temp = estimate_color_temperature(obj_img_np)
+            target_temp = current_temp + suggestions['color_temp_adjust']
+            adjusted_np = adjust_color_temperature(obj_img_np, target_temp, current_temp)
+            obj_img = Image.fromarray(adjusted_np)
+        
+        if suggestions.get('blur', False):
+            blur_amount = suggestions.get('blur_amount', 3)
+            # Apply blur using OpenCV
+            obj_img_np = np.array(obj_img)
+            blurred = cv2.GaussianBlur(obj_img_np, (blur_amount * 2 + 1, blur_amount * 2 + 1), blur_amount)
+            obj_img = Image.fromarray(blurred)
+    
+    # Always apply rescale (mandatory)
+    object_area = (outerbox[0, 2] - outerbox[0, 0]) * (outerbox[0, 3] - outerbox[0, 1])
+    if object_area < SMALL_OBJECT_THRESHOLD:
+        rescale_factor = rand(1.5, 3.0)
+    elif object_area > LARGE_OBJECT_THRESHOLD:
+        rescale_factor = rand(0.5, 1.5)
+    else:
+        rescale_factor = rand(0.75, 2.0)
+    
+    obj_img, obj_mask, outerbox, inner_boxes = apply_rescale(
+        obj_img, obj_mask, outerbox, inner_boxes, rescale_factor
+    )
+    
+    # Apply random flips (not context-dependent)
+    if rand() < 0.5:
+        obj_img, obj_mask, outerbox, inner_boxes = apply_horizontal_flip(
+            obj_img, obj_mask, outerbox, inner_boxes
+        )
+    if rand() < 0.5:
+        obj_img, obj_mask, outerbox, inner_boxes = apply_vertical_flip(
+            obj_img, obj_mask, outerbox, inner_boxes
+        )
+    
+    return obj_img, obj_mask, outerbox, inner_boxes

@@ -14,6 +14,9 @@ from sigtor.processing.augmentation import preprocess_mask, preprocess_source_im
 from sigtor.processing.data_processing import get_realcoords, convert_instance_to_binary, get_tightfit_targetsize
 from sigtor.utils.image_utils import mask_to_RGB, get_colors
 from sigtor.processing.image_postprocessing import post_processing
+from sigtor.processing.adaptive_blending import adaptive_blend, select_optimal_blending_method
+from sigtor.processing.edge_refinement import refine_object_boundaries
+from sigtor.processing.context_analysis import analyze_image_context
 
 
 def get_backgrnd_image(bckgrnd_imgs_dir: str, target_img_size: Tuple[int, int]) -> np.ndarray:
@@ -684,25 +687,83 @@ def compose_final_image(
     # Paste the selected objects onto a random pivot on the target image
     new_img2, new_mask2, new_boxes2 = paste_at_random_pivot(new_img, new_mask, final_boxes, scale_min=1.0,
                                                             scale_max=1.15)
-    # Preprocess the mask for cloning
-    binary_mask = convert_instance_to_binary(new_mask2)
-    preprocessed_mask = preprocess_mask(binary_mask, method='erode')
-
+    
     # Handle the background image
     background_img = handle_background_image(args.bckgrnd_imgs_dir, (new_img2.shape[1], new_img2.shape[0], 3))
-
-    # Optionally apply some post processing on the selected background image before using
-    # background_img = np.array(post_processing(background_img, new_mask2))
-
-    # Preprocess the source image
-    # new_img2 = preprocess_source_image(new_img2)
-
-    # Create the composite image using the dynamically selected or user-chosen method
-    final_image = create_composite_image(new_img2, background_img, preprocessed_mask, clone_choice='SoftPaste')
-
+    
+    # Convert to numpy arrays for processing
+    new_img2_np = np.array(new_img2)
+    background_img_np = np.array(background_img) if isinstance(background_img, Image.Image) else background_img
+    
+    # Get configuration options with defaults
+    blending_method = getattr(args, 'blending_method', 'auto')
+    enable_post_processing = getattr(args, 'enable_post_processing', True)
+    edge_refinement_level = getattr(args, 'edge_refinement_level', 'medium')
+    color_harmonization = getattr(args, 'color_harmonization', True)
+    context_aware_augmentations = getattr(args, 'context_aware_augmentations', True)
+    
+    try:
+        # Refine mask boundaries using advanced edge refinement
+        binary_mask = convert_instance_to_binary(new_mask2)
+        refined_mask = refine_object_boundaries(
+            binary_mask, new_img2_np, refinement_level=edge_refinement_level
+        )
+    except Exception:
+        # Fallback to simple preprocessing
+        refined_mask = preprocess_mask(binary_mask, method='erode')
+    
+    # Analyze contexts for adaptive blending
+    object_context = None
+    background_context = None
+    if blending_method == 'auto' or context_aware_augmentations:
+        try:
+            object_context = analyze_image_context(new_img2_np, refined_mask)
+            background_context = analyze_image_context(background_img_np)
+        except Exception:
+            pass  # Continue without context analysis
+    
+    # Create the composite image using adaptive blending
+    try:
+        if blending_method == 'auto' and object_context is not None and background_context is not None:
+            # Use adaptive blending with context analysis
+            final_image = adaptive_blend(
+                new_img2_np, background_img_np, refined_mask,
+                method=None, params=None
+            )
+        else:
+            # Use specified method or fallback
+            if blending_method == 'auto':
+                blending_method = 'SoftPaste'  # Fallback
+            
+            final_image = create_composite_image(
+                new_img2_np, background_img_np, refined_mask,
+                clone_choice=blending_method
+            )
+    except Exception as e:
+        # Fallback to simple paste if advanced blending fails
+        try:
+            final_image = create_composite_image(
+                new_img2_np, background_img_np, refined_mask,
+                clone_choice='SoftPaste'
+            )
+        except Exception:
+            # Last resort: simple paste
+            from sigtor.processing.image_composition import simple_paste
+            final_image = simple_paste(new_img2_np, background_img_np, refined_mask)
+    
     # Perform post-processing to minimize visual artifacts
-    # final_image = post_processing(final_image, preprocessed_mask)
-
-    # Convert the none processed mask into a colored RGB segmentation mask
+    if enable_post_processing:
+        try:
+            final_image = post_processing(
+                final_image,
+                mask=refined_mask,
+                background_img=background_img_np,
+                refinement_level=edge_refinement_level,
+                enable_color_harmonization=color_harmonization
+            )
+        except Exception:
+            pass  # Continue without post-processing if it fails
+    
+    # Convert the mask into a colored RGB segmentation mask
     final_colored_mask = mask_to_RGB(Image.fromarray(new_mask2), get_colors(256))
     return final_image, final_colored_mask, new_boxes2

@@ -51,7 +51,7 @@ def visualize_annotations(ann_path, class_names=None, output_dir="./misc/images/
         try:
             boxes = np.array([np.array(list(map(float, box.split(',')))) for box in line_content[1:]]).astype(
                 'int32').reshape(-1, 5)
-            classes = boxes[..., 4] + 1
+            classes = boxes[..., 4]
             if class_names is None:
                 class_names = classes
             colors = get_colors()

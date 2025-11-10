@@ -12,7 +12,7 @@ Expanding_Annotation:
 SIGtor:
   # Path to the source annotation file (YOLO format): Use the expanded annotations file name as source annotation for SIGtoring
   # Format: image_path x1,y1,x2,y2,class_id x1,y1,x2,y2,class_id ...
-  source_ann_file: "./Datasets/Source/source_annotations.txt"
+  source_ann_file: "./Datasets/Source/source_annotations_expanded.txt"
   
   # Directory to save the generated images, annotations, and masks
   destn_dir: "./Datasets/SIGtored/"
@@ -26,25 +26,84 @@ SIGtor:
   bckgrnd_imgs_dir: "./Datasets/BackgroundImages"
   
   # Path to the file containing class names (one per line)
-  classnames_file: "./data/classes.txt"
+  classnames_file: "./Datasets/Source/voc_classes.txt"
   
   # Total number of new synthetic images to generate
   total_new_imgs: 100
   
   # Maximum number of iterations to search for objects when building an image
   max_search_iterations: 5
+  
+  # Blending method: 'auto' (adaptive selection based on context) or specific method
+  # Options: 'auto', 'SoftPaste', 'NormalClone', 'MixedClone', 'MonochromeTransfer', 'AlphaBlend'
+  # 'auto' is recommended as it selects the best method based on object-background compatibility
+  blending_method: "auto"
+  
+  # Enable multi-stage post-processing to reduce artifacts and enhance quality (true/false)
+  # Post-processing includes: edge refinement, color harmonization, edge blending, global enhancement, final smoothing
+  enable_post_processing: true
+  
+  # Edge refinement level: 'low', 'medium', or 'high'
+  # - 'low': Fast processing with basic edge smoothing
+  # - 'medium': Balanced quality and performance (recommended)
+  # - 'high': Maximum quality with slower processing
+  edge_refinement_level: "medium"
+  
+  # Enable color harmonization between objects and background (true/false)
+  # When enabled, object colors are matched to background using histogram matching and lighting consistency
+  color_harmonization: true
+  
+  # Enable context-aware augmentations (true/false)
+  # When enabled, augmentations are selected based on object-background compatibility analysis
+  # This ensures realistic compositions by matching brightness, contrast, color temperature, etc.
+  context_aware_augmentations: true
+  
+  # Enable quality validation after image generation (true/false)
+  # When enabled, generated images are validated for quality issues (size, color, artifacts)
+  # A quality report (quality_report.json) is saved in the output directory
+  quality_validation: false
+  
+  # Quality rejection threshold: 'none', 'critical', or 'all'
+  # - 'none': Only log issues, never reject images (default)
+  # - 'critical': Reject images with critical issues (empty, NaN, Inf, wrong dtype)
+  # - 'all': Reject images with any quality issues
+  # Only used when quality_validation is true
+  quality_reject_threshold: "critical"
 
 Test:
   # Path to the annotation file for visualization/testing
   source_ann_file: "./Datasets/SIGtored/sigtored_annotations.txt"
   
   # Path to the file containing class names
-  classnames_file: "./data/classes.txt"
+  classnames_file: "./Datasets/Source/voc_classes.txt"
   
   # Directory to save the visualized images with bounding boxes
   output_dir: "./misc/images/"
   
   # Number of images to test/visualize: positive number or "All"
   num_test_images: "All"
+
+Analysis:
+  # Path to source annotation file (before SIGtoring)
+  source_ann_file: "./Datasets/Source/source_annotations.txt"
+  
+  # Path to SIGtored annotation file (after SIGtoring)
+  sigtored_ann_file: "./Datasets/SIGtored/sigtored_annotations.txt"
+  
+  # Path to the file containing class names
+  classnames_file: "./Datasets/Source/voc_classes.txt"
+  
+  # Directory to save analysis reports and visualizations
+  output_dir: "./analysis_reports/"
+  
+  # Generate visualization plots (true/false)
+  generate_plots: true
+  
+  # Generate text and JSON reports (true/false)
+  generate_report: true
+  
+  # Compare source vs SIGtored datasets (true/false)
+  # When enabled, both source_ann_file and sigtored_ann_file must be provided
+  comparison_mode: false
 
 
