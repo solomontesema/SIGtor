@@ -329,6 +329,9 @@ python3 -m sigtor.scripts.expand [OPTIONS]
 
 # Visualize results
 python3 -m sigtor.scripts.visualize [OPTIONS]
+
+# Analyze dataset quality
+python3 -m sigtor.scripts.analyze [OPTIONS]
 ```
 
 **Note**: Always run these commands from the project root directory (where `setup.py` and `README.md` are located) so Python can find the `sigtor` package.
@@ -346,6 +349,9 @@ sigtor-expand [OPTIONS]
 
 # Visualize results
 sigtor-visualize [OPTIONS]
+
+# Analyze dataset quality
+sigtor-analyze [OPTIONS]
 ```
 
 ### Available Options
@@ -367,6 +373,13 @@ All commands support the following command-line arguments (override config file 
 ```bash
 [--config CONFIG] [--source_ann_file PATH] [--classnames_file PATH] 
 [--output_dir PATH] [--num_test_images N]
+```
+
+**Analyze Dataset:**
+```bash
+[--config CONFIG] [--source_ann_file PATH] [--sigtored_ann_file PATH]
+[--classnames_file PATH] [--output_dir PATH] [--generate_plots true/false]
+[--generate_report true/false] [--comparison_mode true/false]
 ```
 
 ### Using as Python Module
