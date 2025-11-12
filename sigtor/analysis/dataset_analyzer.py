@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from dataclasses import dataclass, field
 from PIL import Image
+from tqdm import tqdm
 
 from sigtor.utils.image_utils import read_ann, get_ground_truth_data, get_classes
 
@@ -115,7 +116,8 @@ def get_spatial_position(box: np.ndarray, img_width: int, img_height: int) -> Tu
 def analyze_dataset(
     annotation_file: str,
     classnames_file: Optional[str] = None,
-    dataset_name: Optional[str] = None
+    dataset_name: Optional[str] = None,
+    load_image_dims: bool = False
 ) -> DatasetStatistics:
     """
     Analyze a YOLO-format annotation file and extract comprehensive statistics.
@@ -124,6 +126,7 @@ def analyze_dataset(
         annotation_file: Path to annotation file in YOLO format
         classnames_file: Optional path to class names file
         dataset_name: Optional name for the dataset
+        load_image_dims: Whether to load actual image dimensions (slow for large datasets)
     
     Returns:
         DatasetStatistics object with all extracted statistics
@@ -141,7 +144,10 @@ def analyze_dataset(
             pass
     
     # Read annotations
+    print(f"Reading annotation file: {annotation_file}")
     annotation_lines = read_ann(annotation_file, shuffle=False)
+    total_lines = len(annotation_lines)
+    print(f"Found {total_lines:,} annotation lines")
     
     # Initialize statistics
     stats = DatasetStatistics(dataset_name=dataset_name)
@@ -149,57 +155,129 @@ def analyze_dataset(
     class_image_counts = defaultdict(set)
     objects_per_image = []
     image_dims = []
-    box_areas = []
-    box_aspect_ratios = []
-    spatial_grid = np.zeros((3, 3))
-    size_counts = {'small': 0, 'medium': 0, 'large': 0}
     
-    # Process each annotation line
-    for line in annotation_lines:
+    # Pre-allocate numpy arrays for vectorized operations
+    all_boxes = []
+    all_class_ids = []
+    all_img_paths = []
+    all_img_indices = []
+    
+    # First pass: collect all data (vectorized where possible)
+    print("Collecting annotation data...")
+    img_idx = 0
+    for line in tqdm(annotation_lines, desc="Parsing annotations", unit="lines"):
         try:
             img_path, boxes = get_ground_truth_data(line)
             
-            # Get image dimensions
-            if os.path.exists(img_path):
-                try:
-                    with Image.open(img_path) as img:
-                        width, height = img.size
+            # Get image dimensions (optional, can be slow)
+            if load_image_dims:
+                if os.path.exists(img_path):
+                    try:
+                        with Image.open(img_path) as img:
+                            width, height = img.size
+                            image_dims.append((width, height))
+                    except Exception:
+                        width, height = 800, 600  # Default
                         image_dims.append((width, height))
-                except Exception:
-                    # If image can't be loaded, skip dimension tracking
+                else:
                     width, height = 800, 600  # Default
+                    image_dims.append((width, height))
             else:
-                width, height = 800, 600  # Default
+                # Use default dimensions for spatial calculations (faster)
+                width, height = 800, 600
+                image_dims.append((width, height))
             
             num_objects = len(boxes)
             objects_per_image.append(num_objects)
             
-            # Process each bounding box
-            for box in boxes:
-                x1, y1, x2, y2, class_id = box
-                class_id = int(class_id)
+            # Collect all boxes for vectorized processing
+            if len(boxes) > 0:
+                all_boxes.append(boxes)
+                all_class_ids.extend(boxes[:, 4].astype(int))
+                all_img_paths.extend([img_path] * len(boxes))
+                all_img_indices.extend([img_idx] * len(boxes))
+            
+            img_idx += 1
                 
-                # Class statistics
-                class_counts[class_id] += 1
-                class_image_counts[class_id].add(img_path)
-                
-                # Size statistics
-                area = calculate_box_area(box)
-                box_areas.append(area)
-                size_cat = get_size_category(area)
-                size_counts[size_cat] += 1
-                
-                # Aspect ratio
-                aspect_ratio = calculate_aspect_ratio(box)
-                box_aspect_ratios.append(aspect_ratio)
-                
-                # Spatial distribution
-                row, col = get_spatial_position(box, width, height)
-                spatial_grid[row, col] += 1
-                
-        except Exception as e:
+        except Exception:
             # Skip malformed lines
             continue
+    
+    # Vectorized processing of all boxes
+    if len(all_boxes) > 0:
+        print("Processing bounding boxes (vectorized)...")
+        # Flatten all boxes into single array
+        all_boxes_flat = np.vstack(all_boxes)
+        all_class_ids = np.array(all_class_ids)
+        
+        # Vectorized area calculation
+        widths = all_boxes_flat[:, 2] - all_boxes_flat[:, 0]
+        heights = all_boxes_flat[:, 3] - all_boxes_flat[:, 1]
+        box_areas = (widths * heights).astype(float)
+        
+        # Vectorized aspect ratio calculation
+        box_aspect_ratios = np.divide(widths, heights, out=np.zeros_like(widths, dtype=float), 
+                                     where=heights != 0)
+        
+        # Vectorized size categorization
+        small_mask = box_areas < SMALL_AREA_THRESHOLD
+        medium_mask = (box_areas >= SMALL_AREA_THRESHOLD) & (box_areas < MEDIUM_AREA_THRESHOLD)
+        large_mask = box_areas >= MEDIUM_AREA_THRESHOLD
+        
+        size_counts = {
+            'small': int(np.sum(small_mask)),
+            'medium': int(np.sum(medium_mask)),
+            'large': int(np.sum(large_mask))
+        }
+        
+        # Vectorized class counting
+        unique_classes, class_counts_array = np.unique(all_class_ids, return_counts=True)
+        for class_id, count in zip(unique_classes, class_counts_array):
+            class_counts[int(class_id)] = int(count)
+        
+        # Class-image mapping (vectorized where possible)
+        for class_id in unique_classes:
+            class_mask = all_class_ids == class_id
+            unique_images = set([all_img_paths[i] for i in np.where(class_mask)[0]])
+            class_image_counts[int(class_id)] = unique_images
+        
+        # Vectorized spatial distribution (using default dimensions for speed)
+        # Calculate centers
+        center_x = (all_boxes_flat[:, 0] + all_boxes_flat[:, 2]) / 2.0
+        center_y = (all_boxes_flat[:, 1] + all_boxes_flat[:, 3]) / 2.0
+        
+        # Normalize to [0, 1] (using default dimensions)
+        norm_x = center_x / 800.0
+        norm_y = center_y / 600.0
+        
+        # Map to 3x3 grid (vectorized)
+        cols = np.clip((norm_x * 3).astype(int), 0, 2)
+        rows = np.clip((norm_y * 3).astype(int), 0, 2)
+        
+        # Count spatial distribution (vectorized using bincount)
+        spatial_grid = np.zeros((3, 3))
+        # Flatten 2D indices to 1D for bincount
+        flat_indices = rows * 3 + cols
+        counts = np.bincount(flat_indices, minlength=9)
+        spatial_grid = counts.reshape(3, 3)
+        
+        # Per-class size distribution (vectorized)
+        class_size_stats = defaultdict(lambda: {'small': 0, 'medium': 0, 'large': 0})
+        for class_id in unique_classes:
+            class_mask = all_class_ids == class_id
+            class_areas = box_areas[class_mask]
+            
+            class_size_stats[int(class_id)]['small'] = int(np.sum(class_areas < SMALL_AREA_THRESHOLD))
+            class_size_stats[int(class_id)]['medium'] = int(np.sum(
+                (class_areas >= SMALL_AREA_THRESHOLD) & (class_areas < MEDIUM_AREA_THRESHOLD)
+            ))
+            class_size_stats[int(class_id)]['large'] = int(np.sum(class_areas >= MEDIUM_AREA_THRESHOLD))
+    else:
+        box_areas = []
+        box_aspect_ratios = []
+        spatial_grid = np.zeros((3, 3))
+        size_counts = {'small': 0, 'medium': 0, 'large': 0}
+        class_size_stats = {}
     
     # Calculate totals
     stats.total_images = len(annotation_lines)
@@ -207,8 +285,8 @@ def analyze_dataset(
     stats.num_classes = len(class_counts)
     stats.objects_per_image = objects_per_image
     stats.image_dimensions = image_dims
-    stats.box_areas = box_areas
-    stats.box_aspect_ratios = box_aspect_ratios
+    stats.box_areas = box_areas.tolist() if isinstance(box_areas, np.ndarray) else box_areas
+    stats.box_aspect_ratios = box_aspect_ratios.tolist() if isinstance(box_aspect_ratios, np.ndarray) else box_aspect_ratios
     stats.spatial_distribution = spatial_grid
     
     # Size distribution
@@ -221,34 +299,17 @@ def analyze_dataset(
         stats.size_distribution.medium_percentage = (size_counts['medium'] / total_size_count) * 100
         stats.size_distribution.large_percentage = (size_counts['large'] / total_size_count) * 100
     
-    # Class statistics
+    # Class statistics (no double pass needed!)
+    print("Computing class statistics...")
     if stats.total_objects > 0:
-        for class_id, count in class_counts.items():
+        for class_id in tqdm(class_counts.keys(), desc="Processing classes", unit="classes"):
+            count = class_counts[class_id]
             class_name = class_names.get(class_id, f"Class_{class_id}")
             images_with = len(class_image_counts[class_id])
             avg_per_image = count / stats.total_images if stats.total_images > 0 else 0.0
             
-            # Size distribution per class
-            small_count = 0
-            medium_count = 0
-            large_count = 0
-            
-            # Re-process to get size distribution per class (simplified - could be optimized)
-            for line in annotation_lines:
-                try:
-                    _, boxes = get_ground_truth_data(line)
-                    for box in boxes:
-                        if int(box[4]) == class_id:
-                            area = calculate_box_area(box)
-                            size_cat = get_size_category(area)
-                            if size_cat == 'small':
-                                small_count += 1
-                            elif size_cat == 'medium':
-                                medium_count += 1
-                            else:
-                                large_count += 1
-                except Exception:
-                    continue
+            # Get size distribution from pre-computed stats
+            size_stats = class_size_stats.get(class_id, {'small': 0, 'medium': 0, 'large': 0})
             
             class_stat = ClassStatistics(
                 class_id=class_id,
@@ -257,9 +318,9 @@ def analyze_dataset(
                 percentage=(count / stats.total_objects) * 100,
                 avg_per_image=avg_per_image,
                 images_with_class=images_with,
-                small_count=small_count,
-                medium_count=medium_count,
-                large_count=large_count
+                small_count=size_stats['small'],
+                medium_count=size_stats['medium'],
+                large_count=size_stats['large']
             )
             stats.class_stats[class_id] = class_stat
     

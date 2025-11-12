@@ -87,25 +87,31 @@ def main():
     
     # Analyze source dataset
     if args.source_ann_file and os.path.exists(args.source_ann_file):
+        print(f"\n{'='*80}")
         print(f"Analyzing source dataset: {args.source_ann_file}")
+        print(f"{'='*80}")
         stats_before = analyze_dataset(
             args.source_ann_file,
             args.classnames_file,
-            dataset_name="source"
+            dataset_name="source",
+            load_image_dims=False  # Skip image loading for speed (use defaults for spatial calc)
         )
-        print(f"  Found {stats_before.total_images} images with {stats_before.total_objects} objects")
+        print(f"\n✓ Found {stats_before.total_images:,} images with {stats_before.total_objects:,} objects")
     elif args.comparison_mode:
         print("Warning: Source annotation file not found, skipping source analysis")
     
     # Analyze SIGtored dataset
     if args.sigtored_ann_file and os.path.exists(args.sigtored_ann_file):
+        print(f"\n{'='*80}")
         print(f"Analyzing SIGtored dataset: {args.sigtored_ann_file}")
+        print(f"{'='*80}")
         stats_after = analyze_dataset(
             args.sigtored_ann_file,
             args.classnames_file,
-            dataset_name="sigtored"
+            dataset_name="sigtored",
+            load_image_dims=False  # Skip image loading for speed (use defaults for spatial calc)
         )
-        print(f"  Found {stats_after.total_images} images with {stats_after.total_objects} objects")
+        print(f"\n✓ Found {stats_after.total_images:,} images with {stats_after.total_objects:,} objects")
     elif args.comparison_mode:
         print("Warning: SIGtored annotation file not found, skipping SIGtored analysis")
     
