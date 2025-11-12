@@ -106,14 +106,14 @@ def analyze_lighting(image: np.ndarray, mask: Optional[np.ndarray] = None) -> Li
 
 
 def analyze_color(image: np.ndarray, mask: Optional[np.ndarray] = None, 
-                  num_dominant: int = 5) -> ColorContext:
+                  num_dominant: int = 3) -> ColorContext:  # Reduced from 5 to 3 for speed
     """
-    Analyze color characteristics of image.
+    Analyze color characteristics of image (optimized).
     
     Args:
         image: Input image (RGB).
         mask: Optional mask to analyze specific region.
-        num_dominant: Number of dominant colors to extract.
+        num_dominant: Number of dominant colors to extract (reduced for performance).
     
     Returns:
         ColorContext with color information.
@@ -127,15 +127,18 @@ def analyze_color(image: np.ndarray, mask: Optional[np.ndarray] = None,
     mean_color = np.mean(region, axis=0)
     std_color = np.std(region, axis=0)
     
-    # Extract dominant colors using K-means (simplified)
+    # Extract dominant colors using K-means (optimized - fewer colors)
     dominant_colors = extract_dominant_colors(image, mask, num_dominant)
     
-    # Compute saturation
+    # Compute saturation (optimized - use downsampled image for speed)
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+    # Downsample for saturation calculation (faster)
+    hsv_small = cv2.resize(hsv, (hsv.shape[1] // 4, hsv.shape[0] // 4), interpolation=cv2.INTER_AREA)
     if mask is not None and len(mask.shape) == 2:
-        saturation = np.mean(hsv[:, :, 1][mask > 127])
+        mask_small = cv2.resize(mask, (mask.shape[1] // 4, mask.shape[0] // 4), interpolation=cv2.INTER_AREA)
+        saturation = np.mean(hsv_small[:, :, 1][mask_small > 127])
     else:
-        saturation = np.mean(hsv[:, :, 1])
+        saturation = np.mean(hsv_small[:, :, 1])
     
     return ColorContext(
         mean_color=mean_color,
@@ -170,11 +173,18 @@ def extract_dominant_colors(image: np.ndarray, mask: Optional[np.ndarray] = None
     # Reshape for K-means
     pixels_float = pixels.astype(np.float32)
     
-    # Apply K-means
+    # Apply K-means (optimized - use fewer iterations and sample pixels for speed)
     try:
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+        # Sample pixels if too many (faster K-means)
+        max_pixels = 10000
+        if len(pixels) > max_pixels:
+            indices = np.random.choice(len(pixels), max_pixels, replace=False)
+            pixels_float = pixels_float[indices]
+        
+        # Reduced iterations for speed
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)  # Was 20
         _, labels, centers = cv2.kmeans(
-            pixels_float, num_colors, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS
+            pixels_float, num_colors, None, criteria, 5, cv2.KMEANS_RANDOM_CENTERS  # Was 10
         )
         
         # Sort by frequency

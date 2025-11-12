@@ -10,6 +10,30 @@ from sigtor.processing.color_harmonization import (
     harmonize_colors, match_lighting_consistency
 )
 
+def _is_image_already_good_quality(image: np.ndarray, mask: Optional[np.ndarray] = None) -> bool:
+    """
+    Quick check if image quality is already good enough to skip some post-processing.
+    
+    Args:
+        image: Input image array.
+        mask: Optional mask.
+    
+    Returns:
+        True if image quality is already good.
+    """
+    # Check if image has reasonable contrast and color distribution
+    if len(image.shape) == 3:
+        # Check each channel
+        for c in range(3):
+            channel = image[:, :, c]
+            std = np.std(channel)
+            mean = np.mean(channel)
+            # If contrast is reasonable (not too flat, not too extreme)
+            if std < 10 or std > 100 or mean < 10 or mean > 245:
+                return False
+    return True
+
+
 def post_processing(
     image: Image.Image,
     mask: Optional[np.ndarray] = None,
@@ -20,6 +44,7 @@ def post_processing(
     """
     Apply multi-stage post-processing pipeline to harmonize the synthetic image,
     reducing visual artifacts and creating a more seamless and realistic appearance.
+    Optimized with fast paths and reduced processing for better performance.
 
     Args:
         image: Input image to be post-processed (PIL Image).
@@ -45,7 +70,12 @@ def post_processing(
         # Assume input is RGB from PIL
         image_rgb = image_np.copy()
         
-        # Stage 1: Edge Refinement
+        # Fast path: Skip post-processing for low refinement if quality is already good
+        if refinement_level == 'low' and not enable_color_harmonization:
+            if _is_image_already_good_quality(image_rgb, mask):
+                return image  # Return original if quality is good
+        
+        # Stage 1: Edge Refinement (optimized - already handles fast paths internally)
         if mask is not None:
             # Refine mask boundaries
             refined_mask = refine_object_boundaries(
@@ -58,7 +88,7 @@ def post_processing(
                 mask, image_rgb, refinement_level=refinement_level
             )
         
-        # Stage 2: Color Harmonization (if background provided)
+        # Stage 2: Color Harmonization (if background provided) - optimized
         if enable_color_harmonization and background_img is not None:
             try:
                 # Ensure background is RGB
@@ -67,11 +97,16 @@ def post_processing(
                 else:
                     bg_rgb = background_img.copy()
                 
-                # Apply color harmonization
-                image_rgb = harmonize_colors(
-                    image_rgb, bg_rgb, refined_mask,
-                    method='combined', boundary_blend=True
-                )
+                # For low/medium refinement, use faster harmonization method
+                if refinement_level == 'low':
+                    # Use only lighting consistency (faster)
+                    image_rgb = match_lighting_consistency(image_rgb, bg_rgb, refined_mask)
+                else:
+                    # Use full harmonization for medium/high
+                    image_rgb = harmonize_colors(
+                        image_rgb, bg_rgb, refined_mask,
+                        method='combined', boundary_blend=True
+                    )
             except Exception as e:
                 # Fallback: apply lighting consistency only
                 try:
@@ -81,44 +116,54 @@ def post_processing(
                 except Exception:
                     pass  # Continue without color harmonization
         
-        # Stage 3: Edge Blending
-        try:
-            # Create gradient alpha mask for smooth blending
-            alpha_mask = create_gradient_alpha_mask(
-                refined_mask, feather_radius=5,
-                edge_map=detect_edges_multi_scale(image_rgb) if refinement_level != 'low' else None
-            )
-            
-            # Apply edge blending
-            alpha_3d = np.expand_dims(alpha_mask, axis=2) / 255.0
-            # Blend with slight smoothing at edges
-            image_rgb = (alpha_3d * image_rgb.astype(np.float32) + 
-                        (1 - alpha_3d) * image_rgb.astype(np.float32))
-            image_rgb = np.clip(image_rgb, 0, 255).astype(np.uint8)
-        except Exception:
-            # Fallback to simple edge blending
-            image_rgb = blend_edges(image_rgb, refined_mask)
+        # Stage 3: Edge Blending (optimized - skip for low level)
+        if refinement_level != 'low':
+            try:
+                # Create gradient alpha mask for smooth blending
+                # Skip edge detection for medium level (faster)
+                edge_map = None
+                if refinement_level == 'high':
+                    try:
+                        edge_map = detect_edges_multi_scale(image_rgb, scales=(1.0,))  # Single scale
+                    except Exception:
+                        edge_map = None
+                
+                alpha_mask = create_gradient_alpha_mask(
+                    refined_mask, feather_radius=5, edge_map=edge_map
+                )
+                
+                # Apply edge blending
+                alpha_3d = np.expand_dims(alpha_mask, axis=2) / 255.0
+                # Blend with slight smoothing at edges
+                image_rgb = (alpha_3d * image_rgb.astype(np.float32) + 
+                            (1 - alpha_3d) * image_rgb.astype(np.float32))
+                image_rgb = np.clip(image_rgb, 0, 255).astype(np.uint8)
+            except Exception:
+                # Fallback to simple edge blending
+                image_rgb = blend_edges(image_rgb, refined_mask)
         
-        # Stage 4: Global Enhancement
-        try:
-            # Convert to LAB for better color balancing
-            lab_img = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
-            
-            # Apply CLAHE to L channel for better contrast
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            lab_img[:, :, 0] = clahe.apply(lab_img[:, :, 0])
-            
-            # Convert back to RGB
-            image_rgb = cv2.cvtColor(lab_img, cv2.COLOR_LAB2RGB)
-        except Exception:
-            pass  # Continue without CLAHE
+        # Stage 4: Global Enhancement (skip for low level)
+        if refinement_level != 'low':
+            try:
+                # Convert to LAB for better color balancing
+                lab_img = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
+                
+                # Apply CLAHE to L channel for better contrast (smaller grid for speed)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))  # Smaller grid
+                lab_img[:, :, 0] = clahe.apply(lab_img[:, :, 0])
+                
+                # Convert back to RGB
+                image_rgb = cv2.cvtColor(lab_img, cv2.COLOR_LAB2RGB)
+            except Exception:
+                pass  # Continue without CLAHE
         
-        # Stage 5: Final Smoothing (light)
-        try:
-            # Apply very light Gaussian blur to reduce artifacts
-            image_rgb = cv2.GaussianBlur(image_rgb, (3, 3), 0)
-        except Exception:
-            pass
+        # Stage 5: Final Smoothing (light) - skip for low level
+        if refinement_level != 'low':
+            try:
+                # Apply very light Gaussian blur to reduce artifacts
+                image_rgb = cv2.GaussianBlur(image_rgb, (3, 3), 0)
+            except Exception:
+                pass
         
         # Convert back to PIL Image
         output_img = Image.fromarray(image_rgb)

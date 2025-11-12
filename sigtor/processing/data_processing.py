@@ -2,6 +2,8 @@ import os
 import numpy as np
 from PIL import Image
 from typing import Dict, Tuple, List, Any
+from functools import lru_cache
+from collections import OrderedDict
 
 from sigtor.processing.augmentation import (
     random_augmentations, heuristic_augmentations, context_aware_augmentations
@@ -9,6 +11,14 @@ from sigtor.processing.augmentation import (
 from sigtor.processing.context_analysis import ImageContext
 from typing import Optional
 from sigtor.utils.image_utils import recalculate_targetsize, overlap_measure
+
+# Cache configuration
+_IMAGE_CACHE_SIZE = 200
+_MASK_CACHE_SIZE = 200
+
+# LRU caches for image and mask loading
+_image_cache = OrderedDict()
+_mask_cache = OrderedDict()
 
 
 def convert_instance_to_binary(mask: np.ndarray) -> np.ndarray:
@@ -142,6 +152,15 @@ def update_vertex_pool(vertex_pool: List[Tuple[int, int]], new_box: np.ndarray) 
 
 
 def get_pastecoords(target_size: Tuple[int, int], all_outer_boxes: np.ndarray) -> Dict[int, np.ndarray]:
+    """
+    Calculate the paste coordinates for the selected objects.
+    Args:
+        target_size (Tuple[int, int]): The size of the target image (width, height).
+        all_outer_boxes (np.ndarray): The outer bounding boxes of the selected objects.
+
+    Returns:
+        Dict[int, np.ndarray]: A dictionary of object IDs and their paste coordinates.
+    """
     target_w, target_h = target_size
     sorted_indices = sort_boxes_by_area(all_outer_boxes)
 
@@ -255,8 +274,21 @@ def crop_image(image: Image.Image, outerbox: np.ndarray) -> Image.Image:
     return image.crop((x1, y1, x2, y2))
 
 
+def _get_cache_key(path: str, coords: Tuple[int, int, int, int]) -> str:
+    """Generate cache key from path and coordinates."""
+    return f"{path}:{coords[0]},{coords[1]},{coords[2]},{coords[3]}"
+
+
 def load_mask_image(mask_path: str, cutout_coord: Tuple[int, int, int, int]) -> Image.Image:
     """Load and crop the mask image using the provided coordinates, converting borders to a distinct value."""
+    # Check cache first
+    cache_key = _get_cache_key(mask_path, cutout_coord)
+    if cache_key in _mask_cache:
+        # Move to end (most recently used)
+        _mask_cache.move_to_end(cache_key)
+        return _mask_cache[cache_key].copy()
+    
+    # Load from disk
     mask_img = Image.open(mask_path)
     obj_mask = mask_img.crop(box=cutout_coord)
 
@@ -264,7 +296,14 @@ def load_mask_image(mask_path: str, cutout_coord: Tuple[int, int, int, int]) -> 
     obj_mask_array = np.array(obj_mask)
     #obj_mask_array[obj_mask_array == 255] = 254
 
-    return Image.fromarray(obj_mask_array)
+    result = Image.fromarray(obj_mask_array)
+    
+    # Add to cache
+    if len(_mask_cache) >= _MASK_CACHE_SIZE:
+        _mask_cache.popitem(last=False)  # Remove oldest
+    _mask_cache[cache_key] = result.copy()
+    
+    return result
 
 
 
@@ -317,17 +356,29 @@ def get_data(annotation_line: str, maskdir: str) -> Tuple[str, Image.Image, Imag
     # Parse the annotation line to get the image path and bounding boxes
     imgpath, inner_boxes = parse_annotation_line(annotation_line)
 
-    # Load the original image
-    org_img = Image.open(imgpath)
-
     # Calculate the outer bounding box that encompasses all overlapping objects
     outerbox = get_outerbox(inner_boxes[:, :4])
+    outerbox_tuple = tuple(outerbox.flatten())
+    
+    # Check cache for full image + crop combination
+    cache_key = _get_cache_key(imgpath, outerbox_tuple)
+    if cache_key in _image_cache:
+        _image_cache.move_to_end(cache_key)
+        cached_result = _image_cache[cache_key]
+        obj_img = cached_result['img'].copy()
+    else:
+        # Load the original image
+        org_img = Image.open(imgpath)
+        # Crop the image based on the outer bounding box
+        obj_img = crop_image(org_img, outerbox)
+        
+        # Add to cache
+        if len(_image_cache) >= _IMAGE_CACHE_SIZE:
+            _image_cache.popitem(last=False)  # Remove oldest
+        _image_cache[cache_key] = {'img': obj_img.copy()}
 
-    # Crop the image based on the outer bounding box
-    obj_img = crop_image(org_img, outerbox)
-
-    # Get the corresponding segmentation mask
-    obj_mask = get_objmask(imgpath, tuple(outerbox.flatten()), maskdir)
+    # Get the corresponding segmentation mask (already cached in get_objmask)
+    obj_mask = get_objmask(imgpath, outerbox_tuple, maskdir)
 
     return imgpath, obj_img, obj_mask, outerbox, inner_boxes
 

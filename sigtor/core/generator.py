@@ -4,6 +4,8 @@ import logging
 import os
 from tqdm import tqdm
 import numpy as np
+from collections import OrderedDict
+from typing import Optional, Tuple
 
 from sigtor.processing.data_processing import select_objects_for_image
 from sigtor.utils.file_ops import initialize_directories, open_annotation_file, save_new_image_and_mask
@@ -11,11 +13,42 @@ from sigtor.processing.image_composition import compose_final_image
 from sigtor.processing.image_composition import handle_background_image
 from sigtor.utils.index_generator import SourceIndexGenerator
 from sigtor.utils.image_utils import read_ann, random_new_image_size
-from sigtor.processing.context_analysis import analyze_image_context
+from sigtor.processing.context_analysis import analyze_image_context, ImageContext
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Context cache for background analysis
+_CONTEXT_CACHE_SIZE = 100
+_context_cache = OrderedDict()
+
+
+def _get_context_cache_key(bg_path: Optional[str], size: Tuple[int, int]) -> str:
+    """Generate cache key for context analysis."""
+    if bg_path:
+        return f"{bg_path}:{size[0]}x{size[1]}"
+    return f"random:{size[0]}x{size[1]}"
+
+
+def _get_cached_context(bg_path: Optional[str], size: Tuple[int, int], bg_sample: np.ndarray) -> Optional[ImageContext]:
+    """Get cached context or analyze and cache."""
+    cache_key = _get_context_cache_key(bg_path, size)
+    
+    # Check cache
+    if cache_key in _context_cache:
+        _context_cache.move_to_end(cache_key)
+        return _context_cache[cache_key]
+    
+    # Analyze and cache
+    try:
+        context = analyze_image_context(bg_sample)
+        if len(_context_cache) >= _CONTEXT_CACHE_SIZE:
+            _context_cache.popitem(last=False)
+        _context_cache[cache_key] = context
+        return context
+    except Exception:
+        return None
 
 
 def validate_image_quality(image, mask=None, min_size=(100, 100)):
@@ -137,13 +170,23 @@ def generate_images(args):
     quality_reject_threshold = getattr(args, 'quality_reject_threshold', 'critical')  # 'none', 'critical', 'all'
     context_aware_aug = getattr(args, 'context_aware_augmentations', True)
 
-    # Generate the required number of new images
-    for img_idx in tqdm(range(args.total_new_imgs), desc='Generating artificial images', leave=True):
+    # Generate the required number of new images with enhanced progress tracking
+    import time
+    start_time = time.time()
+    pbar = tqdm(
+        range(args.total_new_imgs), 
+        desc='Generating images', 
+        leave=True,
+        unit='img',
+        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+    )
+    
+    for img_idx in pbar:
         try:
             # Randomly determine the new image size
             target_image_size = random_new_image_size((400, 600), (400, 600))
             
-            # Get background context if context-aware augmentations are enabled
+            # Get background context if context-aware augmentations are enabled (with caching)
             background_context = None
             if context_aware_aug:
                 try:
@@ -152,7 +195,11 @@ def generate_images(args):
                         args.bckgrnd_imgs_dir, target_image_size
                     )
                     if background_sample is not None:
-                        background_context = analyze_image_context(background_sample)
+                        # Try to get background path for caching (if available)
+                        bg_path = None  # Background path not directly available, use None
+                        background_context = _get_cached_context(
+                            bg_path, target_image_size, background_sample
+                        )
                 except Exception as e:
                     logger.debug(f"Could not analyze background context: {e}")
                     background_context = None
@@ -235,6 +282,16 @@ def generate_images(args):
                     new_images_dir, new_masks_dir, count_new_images
                 )
                 count_new_images += 1
+                
+                # Update progress bar with statistics
+                elapsed = time.time() - start_time
+                rate = count_new_images / elapsed if elapsed > 0 else 0
+                pbar.set_postfix({
+                    'success': count_new_images,
+                    'failed': failed_images,
+                    'rejected': rejected_images,
+                    'rate': f'{rate:.1f} img/s'
+                })
             except Exception as e:
                 logger.warning(f"Failed to save image {img_idx}: {e}")
                 failed_images += 1
@@ -244,6 +301,8 @@ def generate_images(args):
             logger.error(f"Unexpected error generating image {img_idx}: {e}")
             failed_images += 1
             continue
+    
+    pbar.close()
 
     # Close the annotation file
     try:

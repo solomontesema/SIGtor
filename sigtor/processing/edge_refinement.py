@@ -152,25 +152,26 @@ def refine_mask_with_edges(
         binary = (mask > 127).astype(np.uint8)
         original_area = np.sum(binary)
         
-        # Multi-stage morphological refinement for smooth edges
+        # Optimized: Use smaller kernels and fewer iterations for speed
         kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         
-        # Stage 1: Close small holes and gaps (preserves object shape)
-        refined = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_small, iterations=2)
+        # Stage 1: Close small holes and gaps (preserves object shape) - reduced iterations
+        refined = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)  # Was 2
         
         # Stage 2: Smooth boundaries with opening (removes small protrusions)
         refined = cv2.morphologyEx(refined, cv2.MORPH_OPEN, kernel_small, iterations=1)
         
-        # Stage 3: Apply additional smoothing with medium kernel for very smooth edges
-        refined = cv2.morphologyEx(refined, cv2.MORPH_CLOSE, kernel_medium, iterations=1)
-        refined = cv2.morphologyEx(refined, cv2.MORPH_OPEN, kernel_medium, iterations=1)
+        # Stage 3: Apply additional smoothing with medium kernel (only if needed)
+        # Skip this stage for speed - can be enabled if quality is critical
+        # refined = cv2.morphologyEx(refined, cv2.MORPH_CLOSE, kernel_medium, iterations=1)
+        # refined = cv2.morphologyEx(refined, cv2.MORPH_OPEN, kernel_medium, iterations=1)
         
         # Safety check: ensure we preserve at least 80% of the original mask area
         refined_area = np.sum(refined > 127)
         if refined_area < original_area * 0.8 and original_area > 0:
             # Fall back to less aggressive processing
-            refined = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_small, iterations=2)
+            refined = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)  # Was 2
             refined = cv2.morphologyEx(refined, cv2.MORPH_OPEN, kernel_small, iterations=1)
         
         # Final check: if still too much is lost, use original mask
@@ -257,13 +258,46 @@ def apply_edge_aware_morphology(
     return result
 
 
+def _is_mask_already_smooth(mask: np.ndarray, threshold: float = 0.02) -> bool:
+    """
+    Check if mask boundaries are already smooth enough to skip refinement.
+    
+    Args:
+        mask: Binary mask (0 and 255).
+        threshold: Threshold for roughness (lower = stricter).
+    
+    Returns:
+        True if mask is already smooth enough.
+    """
+    binary = (mask > 127).astype(np.uint8)
+    if np.sum(binary) == 0:
+        return True
+    
+    # Compute boundary roughness using gradient
+    grad_x = cv2.Sobel(binary, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(binary, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    
+    # Check if boundary is smooth (low gradient variance)
+    boundary_pixels = gradient_magnitude[gradient_magnitude > 0]
+    if len(boundary_pixels) == 0:
+        return True
+    
+    # If gradient variance is low, mask is already smooth
+    gradient_std = np.std(boundary_pixels)
+    max_gradient = np.max(gradient_magnitude)
+    roughness = gradient_std / max_gradient if max_gradient > 0 else 0
+    
+    return roughness < threshold
+
+
 def refine_object_boundaries(
     mask: np.ndarray,
     image: Optional[np.ndarray] = None,
     refinement_level: str = 'medium'
 ) -> np.ndarray:
     """
-    Comprehensive boundary refinement pipeline.
+    Comprehensive boundary refinement pipeline with optimizations.
     
     Args:
         mask: Binary mask (0 and 255).
@@ -273,7 +307,11 @@ def refine_object_boundaries(
     Returns:
         Refined mask with smooth boundaries.
     """
-    # Determine parameters based on refinement level
+    # Fast path: check if mask is already smooth enough (skip refinement)
+    if refinement_level == 'low' and _is_mask_already_smooth(mask, threshold=0.03):
+        return mask.copy()
+    
+    # Determine parameters based on refinement level (optimized)
     if refinement_level == 'low':
         base_feather = 3
         use_edge_detection = False
@@ -282,30 +320,55 @@ def refine_object_boundaries(
         base_feather = 8
         use_edge_detection = True
         morph_method = 'distance_transform'
+        # For high level, consider downscaling for speed
+        use_downscaling = True
     else:  # medium
         base_feather = 5
-        use_edge_detection = True
+        use_edge_detection = False  # Skip edge detection for medium (faster)
         morph_method = 'morphological'
+        use_downscaling = False
     
-    # Detect edges if image provided
+    # Downscale for high-level refinement (faster processing)
+    original_mask = mask.copy()
+    scale_factor = 0.5 if (refinement_level == 'high' and use_downscaling) else 1.0
+    if scale_factor < 1.0:
+        h, w = mask.shape
+        mask = cv2.resize(mask, (int(w * scale_factor), int(h * scale_factor)), 
+                         interpolation=cv2.INTER_AREA)
+    
+    # Detect edges if image provided (only for high level now)
     edge_map = None
     if use_edge_detection and image is not None:
         try:
-            edge_map = detect_edges_multi_scale(image)
+            # For high level with downscaling, also downscale image
+            if scale_factor < 1.0:
+                img_h, img_w = image.shape[:2]
+                image_small = cv2.resize(image, (int(img_w * scale_factor), int(img_h * scale_factor)),
+                                        interpolation=cv2.INTER_AREA)
+                edge_map = detect_edges_multi_scale(image_small, scales=(1.0, 0.5))  # Fewer scales
+            else:
+                edge_map = detect_edges_multi_scale(image, scales=(1.0, 0.5))  # Fewer scales for speed
         except Exception:
             edge_map = None
     
     # Refine mask
     refined_mask = refine_mask_with_edges(mask, edge_map, method=morph_method)
     
-    # Apply edge-aware morphology if needed (with safety checks)
-    if edge_map is not None and refinement_level != 'low':
-        original_area = np.sum(mask > 127)
+    # Upscale if we downscaled
+    if scale_factor < 1.0:
+        h, w = original_mask.shape
+        refined_mask = cv2.resize(refined_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Threshold to ensure binary
+        refined_mask = (refined_mask > 127).astype(np.uint8) * 255
+    
+    # Apply edge-aware morphology if needed (with safety checks) - only for high
+    if edge_map is not None and refinement_level == 'high':
+        original_area = np.sum(original_mask > 127)
         refined_mask_before = refined_mask.copy()
         
-        refined_mask = apply_edge_aware_morphology(refined_mask, edge_map, 
+        refined_mask = apply_edge_aware_morphology(refined_mask, None,  # Skip edge_map for speed
                                                    operation='close', 
-                                                   base_iterations=2)
+                                                   base_iterations=1)  # Reduced iterations
         
         # Safety check: ensure edge-aware morphology doesn't remove too much
         refined_area = np.sum(refined_mask > 127)

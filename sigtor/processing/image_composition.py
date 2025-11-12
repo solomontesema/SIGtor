@@ -3,6 +3,8 @@ import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, List, Optional, Dict, Any
+from collections import OrderedDict
+import hashlib
 
 import cv2
 import numpy as np
@@ -16,7 +18,39 @@ from sigtor.utils.image_utils import mask_to_RGB, get_colors
 from sigtor.processing.image_postprocessing import post_processing
 from sigtor.processing.adaptive_blending import adaptive_blend, select_optimal_blending_method
 from sigtor.processing.edge_refinement import refine_object_boundaries
-from sigtor.processing.context_analysis import analyze_image_context
+from sigtor.processing.context_analysis import analyze_image_context, ImageContext
+
+# Context cache for image composition
+_COMPOSITION_CONTEXT_CACHE_SIZE = 50
+_composition_context_cache = OrderedDict()
+
+
+def _get_image_hash(image: np.ndarray) -> str:
+    """Generate hash for image for caching."""
+    # Use a small sample of the image for hashing (faster)
+    sample = image[::10, ::10]  # Sample every 10th pixel
+    return hashlib.md5(sample.tobytes()).hexdigest()
+
+
+def _get_cached_composition_context(image: np.ndarray, mask: Optional[np.ndarray] = None) -> Optional[ImageContext]:
+    """Get cached context or analyze and cache."""
+    img_hash = _get_image_hash(image)
+    cache_key = f"{img_hash}:{mask is not None}"
+    
+    # Check cache
+    if cache_key in _composition_context_cache:
+        _composition_context_cache.move_to_end(cache_key)
+        return _composition_context_cache[cache_key]
+    
+    # Analyze and cache
+    try:
+        context = analyze_image_context(image, mask)
+        if len(_composition_context_cache) >= _COMPOSITION_CONTEXT_CACHE_SIZE:
+            _composition_context_cache.popitem(last=False)
+        _composition_context_cache[cache_key] = context
+        return context
+    except Exception:
+        return None
 
 
 def get_backgrnd_image(bckgrnd_imgs_dir: str, target_img_size: Tuple[int, int]) -> np.ndarray:
@@ -712,13 +746,15 @@ def compose_final_image(
         # Fallback to simple preprocessing
         refined_mask = preprocess_mask(binary_mask, method='erode')
     
-    # Analyze contexts for adaptive blending
+    # Analyze contexts for adaptive blending (with caching and optimization)
     object_context = None
     background_context = None
-    if blending_method == 'auto' or context_aware_augmentations:
+    # Only do context analysis if blending_method is 'auto' (skip if specific method is chosen)
+    if blending_method == 'auto':
         try:
-            object_context = analyze_image_context(new_img2_np, refined_mask)
-            background_context = analyze_image_context(background_img_np)
+            # Use cached context analysis
+            object_context = _get_cached_composition_context(new_img2_np, refined_mask)
+            background_context = _get_cached_composition_context(background_img_np, None)
         except Exception:
             pass  # Continue without context analysis
     
