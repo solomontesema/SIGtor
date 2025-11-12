@@ -44,6 +44,7 @@ setup(
             'sigtor-expand=sigtor.scripts.expand:main',
             'sigtor-visualize=sigtor.scripts.visualize:main',
             'sigtor-analyze=sigtor.scripts.analyze:main',
+            'sigtor-merge=sigtor.scripts.merge:main',
         ],
     },
     classifiers=[

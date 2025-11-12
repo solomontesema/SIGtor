@@ -106,4 +106,17 @@ Analysis:
   # When enabled, both source_ann_file and sigtored_ann_file must be provided
   comparison_mode: false
 
+Merge:
+  # Path to source annotation file (original dataset)
+  source_ann_file: "./Datasets/Source/source_annotations.txt"
+  
+  # Path to SIGtored annotation file (synthetic dataset)
+  sigtored_ann_file: "./Datasets/SIGtored/sigtored_annotations.txt"
+  
+  # Output path for combined annotations
+  output_file: "./Datasets/Combined/combined_annotations.txt"
+  
+  # Shuffle/randomize combined annotations (true/false)
+  shuffle: true
+
 

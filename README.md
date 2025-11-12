@@ -21,6 +21,7 @@ python3 -m sigtor.scripts.generate      # Generate images
 python3 -m sigtor.scripts.expand        # Expand annotations
 python3 -m sigtor.scripts.visualize     # Visualize results
 python3 -m sigtor.scripts.analyze        # Analyze dataset quality
+python3 -m sigtor.scripts.merge          # Merge annotations
 ```
 
 **Run with installation** (after `pip install -e .`):
@@ -29,6 +30,7 @@ sigtor              # Generate images
 sigtor-expand       # Expand annotations
 sigtor-visualize    # Visualize results
 sigtor-analyze      # Analyze dataset quality
+sigtor-merge        # Merge annotations
 ```
 
 ## Features
@@ -180,6 +182,30 @@ python3 -m sigtor.scripts.visualize --source_ann_file ./Datasets/SIGtored/sigtor
 sigtor-visualize --source_ann_file ./Datasets/SIGtored/sigtored_annotations.txt
 ```
 
+### 6. Analyze Dataset Quality (Optional)
+
+Use the analysis tool to understand dataset characteristics:
+
+```bash
+python3 -m sigtor.scripts.analyze
+# or
+sigtor-analyze
+```
+
+This generates comprehensive statistics, visualizations, and reports about class distribution, object sizes, spatial distribution, and imbalance metrics. See the [Dataset Analysis](#dataset-analysis) section for details.
+
+### 7. Merge Annotations (Optional)
+
+Combine your source and SIGtored annotations into a single file for training:
+
+```bash
+python3 -m sigtor.scripts.merge
+# or
+sigtor-merge
+```
+
+This merges the original dataset annotations with SIGtored synthetic annotations into one combined file, optionally shuffled for better training distribution. The output is saved to `./Datasets/Combined/combined_annotations.txt` by default.
+
 ## Configuration
 
 SIGtor uses a YAML configuration file (`config.yaml`) with three main sections:
@@ -217,6 +243,13 @@ Configuration for dataset analysis:
 - `generate_plots`: Generate visualization plots (true/false)
 - `generate_report`: Generate text and JSON reports (true/false)
 - `comparison_mode`: Compare source vs SIGtored datasets (true/false)
+
+### Merge Section
+Configuration for merging annotations:
+- `source_ann_file`: Path to source annotation file (original dataset)
+- `sigtored_ann_file`: Path to SIGtored annotation file (synthetic dataset)
+- `output_file`: Output path for combined annotations (default: `./Datasets/Combined/combined_annotations.txt`)
+- `shuffle`: Shuffle/randomize combined annotations (true/false)
 
 ### Expanding_Annotation Section
 Configuration for annotation expansion:
@@ -340,6 +373,9 @@ python3 -m sigtor.scripts.visualize [OPTIONS]
 
 # Analyze dataset quality
 python3 -m sigtor.scripts.analyze [OPTIONS]
+
+# Merge annotations
+python3 -m sigtor.scripts.merge [OPTIONS]
 ```
 
 **Note**: Always run these commands from the project root directory (where `setup.py` and `README.md` are located) so Python can find the `sigtor` package.
@@ -360,6 +396,9 @@ sigtor-visualize [OPTIONS]
 
 # Analyze dataset quality
 sigtor-analyze [OPTIONS]
+
+# Merge annotations
+sigtor-merge [OPTIONS]
 ```
 
 ### Available Options
@@ -388,6 +427,12 @@ All commands support the following command-line arguments (override config file 
 [--config CONFIG] [--source_ann_file PATH] [--sigtored_ann_file PATH]
 [--classnames_file PATH] [--output_dir PATH] [--generate_plots true/false]
 [--generate_report true/false] [--comparison_mode true/false]
+```
+
+**Merge Annotations:**
+```bash
+[--config CONFIG] [--source_ann_file PATH] [--sigtored_ann_file PATH]
+[--output_file PATH] [--shuffle true/false]
 ```
 
 ### Using as Python Module
